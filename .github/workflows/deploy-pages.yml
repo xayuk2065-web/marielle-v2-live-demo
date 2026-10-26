@@ -21,6 +21,18 @@ jobs:
         uses: actions/checkout@v4
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+      - name: Apply requested V2.1 refinements to deployment copy
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          file = Path('index.html')
+          source = file.read_text(encoding='utf-8')
+          if 'marielle-refinement.css' not in source:
+              source = source.replace('</head>', '<link rel="stylesheet" href="marielle-refinement.css"></head>', 1)
+          if 'marielle-refinement.js' not in source:
+              source = source.replace('</body>', '<script src="marielle-refinement.js" defer></script></body>', 1)
+          file.write_text(source, encoding='utf-8')
+          PY
       - name: Upload approved static site
         uses: actions/upload-pages-artifact@v4
         with:
