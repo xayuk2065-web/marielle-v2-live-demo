@@ -21,6 +21,12 @@ jobs:
         uses: actions/checkout@v4
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+      - name: Validate sample page script
+        run: |
+          node --check marielle-details.js
+          node --check marielle-refinement.js
+          grep -q 'mar-detail-view' marielle-details.js
+          grep -q 'mar-detail-hero' marielle-details.css
       - name: Apply requested V2.1 refinements to deployment copy
         run: |
           python - <<'PY'
