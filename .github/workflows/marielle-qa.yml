@@ -1,0 +1,120 @@
+name: Marielle V2.2 source-only QA and 14s video
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/marielle-qa.yml'
+permissions:
+  contents: read
+jobs:
+  audit-and-capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare temporary copy of approved site
+        run: |
+          mkdir -p qa-public
+          cp index.html marielle-*.css marielle-*.js qa-public/
+          python - <<'PY'
+          from pathlib import Path
+          f=Path('qa-public/index.html')
+          s=f.read_text(encoding='utf-8')
+          for name in ['marielle-refinement.css','marielle-details.css']:
+              if name not in s:
+                  s=s.replace('</head>',f'<link rel="stylesheet" href="{name}"></head>',1)
+          for name in ['marielle-refinement.js','marielle-details.js']:
+              if name not in s:
+                  s=s.replace('</body>',f'<script src="{name}" defer></script></body>',1)
+          f.write_text(s,encoding='utf-8')
+          PY
+          node --check marielle-details.js
+          node --check marielle-refinement.js
+      - name: Install headless browser and video tools
+        run: |
+          npm install --no-save playwright@1.58.2
+          npx playwright install --with-deps chromium
+      - name: Browser test original approved GitHub Pages content
+        run: |
+          mkdir -p qa-output
+          python3 -m http.server 8765 --bind 127.0.0.1 -d qa-public >qa-output/server.log 2>&1 &
+          cat > qa-test.cjs <<'JS'
+          const fs=require('fs');
+          const {chromium}=require('playwright');
+          const url='http://127.0.0.1:8765/';
+          const checks=[];
+          const results={tested_at_utc:new Date().toISOString(),source:'approved GitHub Pages repository content plus deployment-injected CSS/JS (NOT WordPress)',checks};
+          function ck(name,success,evidence){checks.push({test:name,status:success?'PASS':'FAIL',evidence});console.log((success?'PASS ':'FAIL ')+name+' '+JSON.stringify(evidence));}
+          (async()=>{
+            const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+            const desktop=await browser.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1});
+            const failures=[];
+            desktop.on('pageerror',e=>failures.push(e.message));
+            await desktop.goto(url,{waitUntil:'networkidle',timeout:60000});
+            await desktop.waitForTimeout(1200);
+            ck('Static homepage renders', (await desktop.locator('body').innerText()).includes('MARIELLE'),await desktop.title());
+            await desktop.screenshot({path:'qa-output/desktop-home.png',fullPage:true});
+            for(const [route,expected] of [
+              ['services','The services'],['brand-strategy','Brand strategy'],['website-design','Website design'],['creative-direction','Creative direction'],
+              ['journal','From the journal'],['clarity-first','Clarity first'],['beautiful-digital-home','beautiful digital home'],['new-chapter','A new chapter'],
+              ['about','Meet Marielle'],['portfolio','Selected work'],['contact',"Let's connect"]]){
+               await desktop.goto(url+'?page='+route,{waitUntil:'domcontentloaded'});
+               await desktop.waitForTimeout(400);
+               const h=(await desktop.locator('.mar-detail-view h1').allTextContents()).join(' ').trim();
+               ck('Route '+route,h.toLowerCase().includes(expected.toLowerCase()),h);
+            }
+            await desktop.goto(url+'?page=journal',{waitUntil:'domcontentloaded'});
+            const cards=await desktop.locator('.mar-detail-card').count();
+            ck('Journal index includes articles',cards>=3,cards);
+            await desktop.goto(url+'?page=brand-strategy',{waitUntil:'domcontentloaded'});
+            const paragraphs=await desktop.locator('.mar-detail-body p').count();
+            ck('Service article has detailed text',paragraphs>=4,paragraphs);
+            ck('Browser JavaScript errors',failures.length===0,failures);
+            await desktop.goto(url,{waitUntil:'networkidle'});
+            const ig=await desktop.evaluate(()=>[...document.querySelectorAll('a')].filter(a=>/instagram/i.test(a.textContent+' '+a.getAttribute('aria-label')+' '+a.href)).map(a=>({label:a.textContent.trim().slice(0,60),href:a.getAttribute('href')})));
+            const igValid=ig.some(x=>/^https:\/\/(www\.)?instagram\.com\/[a-zA-Z0-9._-]+\/?/.test(x.href||''));
+            ck('Instagram external profile link',igValid,ig);
+            const mobile=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true});
+            await mobile.goto(url,{waitUntil:'networkidle'});
+            await mobile.waitForTimeout(600);
+            const over=await mobile.evaluate(()=>({doc:document.documentElement.scrollWidth,view:innerWidth}));
+            ck('Mobile 390px no horizontal overflow',over.doc<=over.view+3,over);
+            await mobile.screenshot({path:'qa-output/mobile-home.png',fullPage:true});
+            await mobile.goto(url+'?page=journal',{waitUntil:'domcontentloaded'});
+            const mtxt=(await mobile.locator('body').innerText());
+            ck('Mobile journal renders',mtxt.includes('From the journal'),mtxt.slice(0,150));
+            await mobile.close();await desktop.close();
+            const videoCtx=await browser.newContext({viewport:{width:1080,height:1080},deviceScaleFactor:1,recordVideo:{dir:'qa-output',size:{width:1080,height:1080}}});
+            const vid=await videoCtx.newPage();
+            await vid.goto(url,{waitUntil:'networkidle'});
+            await vid.waitForTimeout(700);
+            await vid.evaluate(()=>window.scrollTo(0,0));
+            const videoPath=await vid.video().path();
+            const total=await vid.evaluate(()=>Math.max(document.documentElement.scrollHeight,document.body.scrollHeight)-innerHeight);
+            const steps=160;
+            const t0=Date.now();
+            for(let i=0;i<=steps;i++){
+               await vid.evaluate(y=>window.scrollTo(0,y),Math.round(total*i/steps));
+               const target=t0+i*87.5;
+               const delay=target-Date.now();
+               if(delay>0)await vid.waitForTimeout(delay);
+            }
+            await vid.close();await videoCtx.close();await browser.close();
+            fs.renameSync(videoPath,'qa-output/raw-scroll.webm');
+            fs.writeFileSync('qa-output/qa-results.json',JSON.stringify(results,null,2));
+            console.log('Finished static demo QA. WordPress/Elementor installation NOT tested.');
+          })().catch(e=>{console.error(e);process.exitCode=1});
+          JS
+          node qa-test.cjs
+          ffmpeg -y -loglevel error -i qa-output/raw-scroll.webm -vf "fps=30,tpad=stop_mode=clone:stop_duration=14,trim=duration=14,scale=1080:1080:flags=lanczos,format=yuv420p" -t 14 -an -c:v libx264 -preset medium -crf 22 -movflags +faststart qa-output/MARIELLE_V2_2_14SEC_REAL_DEMO.mp4
+          ffprobe -v error -show_entries format=duration:stream=width,height -of json qa-output/MARIELLE_V2_2_14SEC_REAL_DEMO.mp4 > qa-output/video-metadata.json
+      - name: Preserve QA report genuine screenshots and video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marielle-v2-2-static-demo-qa-and-video
+          path: qa-output/
+          retention-days: 30
