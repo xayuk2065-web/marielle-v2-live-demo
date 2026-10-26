@@ -83,7 +83,7 @@ jobs:
           import json
           html=Path('qa-results/wp-rendered-home.html').read_text()
           results=[
-             ('HTTP WordPress homepage contains locked heading',bool(__import__('re').search(r'Make\\s+your\\s+mark\\s*\\.',__import__('re').sub(r'<[^>]*>',' ',__import__('re').search(r'<h1[^>]*>(.*?)</h1>',html,__import__('re').S).group(1))))),
+             ('HTTP WordPress homepage contains locked heading',bool(__import__('re').search(r'Make\s+your\s+mark\s*\.',__import__('re').sub(r'<[^>]*>',' ',__import__('re').search(r'<h1[^>]*>(.*?)</h1>',html,__import__('re').S).group(1))))),
              ('Original 20 image references preserved',html.count('data:image/webp;base64,')==20),
              ('WP adds Elementor assets',('elementor' in html.lower() and 'wp-content' in html)),
              ('WP renders configured Instagram footer integration','data-marielle-instagram' in html and 'marielle_qa' in html),
