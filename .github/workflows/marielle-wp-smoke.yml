@@ -1,0 +1,105 @@
+name: Marielle isolated WordPress Elementor integration smoke
+on:
+  push:
+    branches: [marielle-qa-technical]
+    paths: [".github/workflows/marielle-wp-smoke.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wordpress-elementor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: qapassword
+          MYSQL_DATABASE: wordpress
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pqapassword"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, mysqli, zip, curl, gd, xml
+          tools: wp-cli
+          coverage: none
+      - name: Assemble candidate entirely outside approved source
+        run: |
+          mkdir -p wp/wp-content/themes/marielle-v2-2-recovery/assets
+          mkdir -p wp/wp-content/plugins/marielle-instagram-connector
+          cp qa-wp-theme/*.php qa-wp-theme/style.css wp/wp-content/themes/marielle-v2-2-recovery/
+          cp index.html wp/wp-content/themes/marielle-v2-2-recovery/assets/approved-demo.html
+          cp marielle-details.js marielle-details.css marielle-refinement.js marielle-refinement.css wp/wp-content/themes/marielle-v2-2-recovery/assets/
+          cp qa-wp-plugin/marielle-instagram-connector.php wp/wp-content/plugins/marielle-instagram-connector/
+          find wp/wp-content/themes/marielle-v2-2-recovery -name '*.php' -exec php -l {} \;
+          php -l wp/wp-content/plugins/marielle-instagram-connector/marielle-instagram-connector.php
+          mkdir -p qa-results
+          (cd wp/wp-content/themes && zip -qr ../../../qa-results/Marielle_RECOVERY_QA_THEME_NOT_FOR_SALE.zip marielle-v2-2-recovery)
+          (cd wp/wp-content/plugins && zip -qr ../../../qa-results/Marielle_Instagram_Connector_QA.zip marielle-instagram-connector)
+          sha256sum qa-results/*.zip > qa-results/packages.sha256
+      - name: Install genuine WordPress
+        run: |
+          wp core download --path=wp --allow-root --force
+          wp config create --path=wp --dbname=wordpress --dbuser=root --dbpass=qapassword --dbhost=127.0.0.1:3306 --allow-root --skip-check
+          wp core install --path=wp --url=http://127.0.0.1:8085 --title="Marielle QA" --admin_user=qaowner --admin_password=qapassword1 --admin_email=qa@example.invalid --skip-email --allow-root
+          wp theme activate marielle-v2-2-recovery --path=wp --allow-root
+          wp plugin activate marielle-instagram-connector --path=wp --allow-root
+          wp plugin install elementor --activate --path=wp --allow-root
+          wp plugin list --path=wp --allow-root --format=json > qa-results/installed-plugins.json
+          wp theme list --path=wp --allow-root --format=json > qa-results/installed-themes.json
+          wp core version --path=wp --allow-root > qa-results/wordpress-version.txt
+          wp eval 'if (!class_exists("Elementor\\Plugin")) { throw new Exception("Elementor not active"); }' --path=wp --allow-root
+          wp eval '$good=marielle_ig_validate_url("https://www.instagram.com/marielle_test/"); $bad=marielle_ig_validate_url("https://malicious.example/anything"); if($good!=="https://www.instagram.com/marielle_test/"||$bad!==""){throw new Exception("Instagram URL sanitation error");}' --path=wp --allow-root
+          wp option update marielle_instagram_profile https://www.instagram.com/marielle_test/ --path=wp --allow-root
+          # This is a disposable fake testing username, not a claimed real account.
+          wp post create --path=wp --post_type=page --post_status=publish --post_title="Elementor Smoke Page" --post_content="Editable Elementor text demonstration" --allow-root > qa-results/elementor-post-created.txt
+          wp eval '$id=get_page_by_title("Elementor Smoke Page",OBJECT,"page")->ID;update_post_meta($id,"_elementor_edit_mode","builder");update_post_meta($id,"_elementor_data",wp_slash(wp_json_encode(array(array("id"=>"abc12345","elType"=>"section","settings"=>array(),"elements"=>array(array("id"=>"def12345","elType"=>"column","settings"=>array(),"elements"=>array(array("id"=>"ghi12345","elType"=>"widget","widgetType"=>"heading","settings"=>array("title"=>"Editable Elementor QA Heading")),"isInner"=>false)),"isInner"=>false)))));echo $id;' --path=wp --allow-root > qa-results/elementor-post-id.txt
+      - name: Real WordPress browser acceptance
+        run: |
+          npm install --no-save playwright@1.58.2
+          npx playwright install chromium
+          (cd wp && php -S 127.0.0.1:8085 > ../qa-results/server.log 2>&1) &
+          python3 -m http.server 8765 -d . > qa-results/static-server.log 2>&1 &
+          sleep 3
+          cat > qa-wp-test.cjs <<'JS'
+          const fs=require('fs');const {chromium}=require('playwright');
+          const R={tests:[],environment:'WordPress + Elementor on disposable GitHub CI runner; reconstructed recovery QA theme, NOT approved master'};
+          function check(name,ok,detail){R.tests.push({name,status:ok?'PASS':'FAIL',detail});console.log((ok?'PASS':'FAIL')+' '+name+' '+JSON.stringify(detail));}
+          (async()=>{
+           const b=await chromium.launch({headless:true,args:['--no-sandbox']});
+           const page=await b.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1});
+           const errs=[];page.on('pageerror',e=>errs.push(e.message));
+           const resp=await page.goto('http://127.0.0.1:8085',{waitUntil:'networkidle',timeout:60000});
+           check('WordPress frontend HTTP 200',resp.status()===200,resp.status());
+           check('Original approved page heading',(await page.locator('h1').allTextContents()).some(x=>x.includes('Make your mark')),await page.locator('h1').allTextContents());
+           check('Elementor active at PHP level',true,'Confirmed by wp-cli runtime before browser');
+           check('Instagram connector renders footer link',await page.locator('a[data-marielle-instagram]').count()===1,await page.locator('a[data-marielle-instagram]').count());
+           const ig=await page.locator('a[data-marielle-instagram]').getAttribute('href');
+           check('Instagram test URL editable via WordPress setting',ig==='https://www.instagram.com/marielle_test/',ig);
+           await page.screenshot({path:'qa-results/wp-desktop.png',fullPage:true});
+           await page.goto('http://127.0.0.1:8085/?page=journal',{waitUntil:'networkidle'});
+           check('WordPress demo journal route',await page.getByText('From the journal').count()>0,'?page=journal');
+           const mobile=await b.newPage({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true});
+           await mobile.goto('http://127.0.0.1:8085',{waitUntil:'networkidle'});
+           const overflow=await mobile.evaluate(()=>({view:innerWidth,doc:document.documentElement.scrollWidth}));
+           check('WordPress mobile 390px no overflow',overflow.doc<=overflow.view+3,overflow);
+           await mobile.screenshot({path:'qa-results/wp-mobile.png',fullPage:true});
+           check('No browser JavaScript exceptions',errs.length===0,errs);
+           await b.close();
+           fs.writeFileSync('qa-results/browser-results.json',JSON.stringify(R,null,2));
+           if(R.tests.some(t=>t.status==='FAIL'))process.exitCode=1;
+          })().catch(e=>{console.error(e);process.exitCode=1});
+          JS
+          node qa-wp-test.cjs
+      - name: Upload test evidence and QA-only recovery files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marielle-wordpress-elementor-isolated-QA
+          path: qa-results/
+          retention-days: 30
