@@ -91,18 +91,18 @@ jobs:
             const vid=await videoCtx.newPage();
             await vid.goto(url,{waitUntil:'networkidle'});
             await vid.waitForTimeout(700);
-            await vid.evaluate(()=>window.scrollTo(0,0));
+            await vid.evaluate(()=>{document.documentElement.style.scrollBehavior='auto';document.body.style.scrollBehavior='auto';window.scrollTo({top:0,behavior:'instant'});});
             const videoPath=await vid.video().path();
             const total=await vid.evaluate(()=>Math.max(document.documentElement.scrollHeight,document.body.scrollHeight)-innerHeight);
             const steps=160;
             const t0=Date.now();
             for(let i=0;i<=steps;i++){
-               await vid.evaluate(y=>window.scrollTo(0,y),Math.round(total*i/steps));
+               await vid.evaluate(p=>{const max=Math.max(document.documentElement.scrollHeight,document.body.scrollHeight)-innerHeight;window.scrollTo({top:Math.round(max*p),behavior:'instant'});},i/steps);
                const target=t0+i*87.5;
                const delay=target-Date.now();
                if(delay>0)await vid.waitForTimeout(delay);
             }
-            await vid.close();await videoCtx.close();await browser.close();
+            const reached=await vid.evaluate(()=>({top:scrollY,max:Math.max(document.documentElement.scrollHeight,document.body.scrollHeight)-innerHeight}));\n            ck('Video reaches page footer',reached.top>=reached.max-10,reached);\n            await vid.close();await videoCtx.close();await browser.close();
             fs.renameSync(videoPath,'qa-output/raw-scroll.webm');
             fs.writeFileSync('qa-output/qa-results.json',JSON.stringify(results,null,2));
             console.log('Finished static demo QA. WordPress/Elementor installation NOT tested.');
