@@ -68,7 +68,7 @@ jobs:
           update_post_meta($post_id,'_elementor_data',wp_slash(wp_json_encode(array($section))));
           $saved=get_post_meta($post_id,'_elementor_data',true);
           verify('Elementor widget data saved',strpos($saved,'Editable Elementor QA Heading')!==false);
-          $html=Elementor\\Plugin::instance()->frontend->get_builder_content_for_display($post_id);
+          $html=Elementor\Plugin::instance()->frontend->get_builder_content_for_display($post_id);
           verify('Elementor heading renders',strpos($html,'Editable Elementor QA Heading')!==false,substr(strip_tags($html),0,80));
           file_put_contents('qa-results/wordpress-elementor-server.json',wp_json_encode(array('scope'=>'Separate recovery candidate only, NOT original approved ZIP','checks'=>$checks),JSON_PRETTY_PRINT));
           if(count(array_filter($checks,function($x){return $x['status']==='FAIL';})))exit(1);
