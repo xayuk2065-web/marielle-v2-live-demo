@@ -31,6 +31,10 @@ jobs:
               source = source.replace('</head>', '<link rel="stylesheet" href="marielle-refinement.css"></head>', 1)
           if 'marielle-refinement.js' not in source:
               source = source.replace('</body>', '<script src="marielle-refinement.js" defer></script></body>', 1)
+          if 'marielle-details.css' not in source:
+              source = source.replace('</head>', '<link rel="stylesheet" href="marielle-details.css"></head>', 1)
+          if 'marielle-details.js' not in source:
+              source = source.replace('</body>', '<script src="marielle-details.js" defer></script></body>', 1)
           file.write_text(source, encoding='utf-8')
           PY
       - name: Upload approved static site
