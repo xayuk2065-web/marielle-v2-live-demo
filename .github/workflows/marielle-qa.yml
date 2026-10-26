@@ -35,7 +35,7 @@ jobs:
           node --check marielle-refinement.js
       - name: Install headless browser and video tools
         run: |
-          npm install --no-save playwright@1.58.2
+          npm install --no-save playwright@1.58.2 ffmpeg-static ffprobe-static
           npx playwright install chromium
       - name: Browser test original approved GitHub Pages content
         run: |
@@ -109,8 +109,8 @@ jobs:
           })().catch(e=>{console.error(e);process.exitCode=1});
           JS
           node qa-test.cjs
-          ffmpeg -y -loglevel error -i qa-output/raw-scroll.webm -vf "fps=30,tpad=stop_mode=clone:stop_duration=14,trim=duration=14,scale=1080:1080:flags=lanczos,format=yuv420p" -t 14 -an -c:v libx264 -preset medium -crf 22 -movflags +faststart qa-output/MARIELLE_V2_2_14SEC_REAL_DEMO.mp4
-          ffprobe -v error -show_entries format=duration:stream=width,height -of json qa-output/MARIELLE_V2_2_14SEC_REAL_DEMO.mp4 > qa-output/video-metadata.json
+          $(node -p "require('ffmpeg-static')") -y -loglevel error -i qa-output/raw-scroll.webm -vf "fps=30,tpad=stop_mode=clone:stop_duration=14,trim=duration=14,scale=1080:1080:flags=lanczos,format=yuv420p" -t 14 -an -c:v libx264 -preset medium -crf 22 -movflags +faststart qa-output/MARIELLE_V2_2_14SEC_REAL_DEMO.mp4
+          $(node -p "require('ffprobe-static').path") -v error -show_entries format=duration:stream=width,height -of json qa-output/MARIELLE_V2_2_14SEC_REAL_DEMO.mp4 > qa-output/video-metadata.json
       - name: Preserve QA report genuine screenshots and video
         if: always()
         uses: actions/upload-artifact@v4
