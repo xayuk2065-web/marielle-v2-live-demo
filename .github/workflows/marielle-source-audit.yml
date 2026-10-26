@@ -1,0 +1,40 @@
+name: Marielle isolated source archive and structure QA
+on:
+  push:
+    branches: [marielle-qa-technical]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check immutable approved demo source
+        run: |
+          mkdir -p audit-source
+          cp index.html marielle-details.js marielle-details.css marielle-refinement.js marielle-refinement.css audit-source/
+          sha256sum audit-source/* > audit-source/SHA256SUMS.txt
+          node --check audit-source/marielle-details.js
+          node --check audit-source/marielle-refinement.js
+          python - <<'PY'
+          from pathlib import Path
+          import re, json, hashlib
+          html=Path('audit-source/index.html').read_text()
+          attrs=re.findall(r'(?:src|href)\s*=\s*["\']([^"\']+)["\']',html)
+          facts={'source_html_bytes':len(html.encode()),'image_data_uris':html.count('data:image/'),
+            'external_links':sorted(set(x for x in attrs if x.startswith('http'))),
+            'paths':sorted(set(x for x in attrs if x.startswith('/') or x.startswith('./'))),
+            'raw_sha256':hashlib.sha256(html.encode()).hexdigest(),
+            'num_script_tags':len(re.findall(r'<script\\b',html)),
+            'num_section_tags':len(re.findall(r'<section\\b',html)),
+            'instagram_mentions':len(re.findall('instagram',html,re.I)),
+            'elementor_mentions':len(re.findall('elementor',html,re.I))}
+          Path('audit-source/static-source-audit.json').write_text(json.dumps(facts,indent=2))
+          print(json.dumps(facts,indent=2)[:10000])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marielle-approved-static-source-snapshot
+          path: audit-source/
+          retention-days: 15
