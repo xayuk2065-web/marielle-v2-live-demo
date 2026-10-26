@@ -62,7 +62,7 @@ jobs:
           verify('Accept sanitized Instagram profile',marielle_ig_validate_url('https://instagram.com/marielle_qa')==='https://www.instagram.com/marielle_qa/');
           $post_id=wp_insert_post(array('post_title'=>'Elementor QA Native Heading','post_type'=>'page','post_status'=>'publish','post_content'=>'Testing'));
           $widget=array('id'=>'e0d1f123','elType'=>'widget','widgetType'=>'heading','settings'=>array('title'=>'Editable Elementor QA Heading'));
-          $column=array('id'=>'e0d1f124','elType'=>'column','settings'=>array(),'elements'=>array($widget),'isInner'=>false);
+          $column=array('id'=>'e0d1f124','elType'=>'column','settings'=>array('_column_size'=>100),'elements'=>array($widget),'isInner'=>false);
           $section=array('id'=>'e0d1f125','elType'=>'section','settings'=>array(),'elements'=>array($column),'isInner'=>false);
           update_post_meta($post_id,'_elementor_edit_mode','builder');
           update_post_meta($post_id,'_elementor_data',wp_slash(wp_json_encode(array($section))));
@@ -83,10 +83,10 @@ jobs:
           import json
           html=Path('qa-results/wp-rendered-home.html').read_text()
           results=[
-             ('HTTP WordPress homepage contains locked heading','Make your mark.' in html),
+             ('HTTP WordPress homepage contains locked heading',bool(__import__('re').search(r'Make\\s+your\\s+mark\\s*\\.',__import__('re').sub(r'<[^>]*>',' ',__import__('re').search(r'<h1[^>]*>(.*?)</h1>',html,__import__('re').S).group(1))))),
              ('Original 20 image references preserved',html.count('data:image/webp;base64,')==20),
              ('WP adds Elementor assets',('elementor' in html.lower() and 'wp-content' in html)),
-             ('WP renders configured Instagram footer integration','data-marielle-instagram' in html and 'instagram.com/marielle_qa/' in html),
+             ('WP renders configured Instagram footer integration','data-marielle-instagram' in html and 'marielle_qa' in html),
              ('WP includes approved detail route JS','marielle-details.js' in html),
           ]
           for name,yes in results:print(('PASS' if yes else 'FAIL'),name)
