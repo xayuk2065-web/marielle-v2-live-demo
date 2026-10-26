@@ -58,7 +58,7 @@ jobs:
           wp option update marielle_instagram_profile https://www.instagram.com/marielle_test/ --path=wp --allow-root
           # This is a disposable fake testing username, not a claimed real account.
           wp post create --path=wp --post_type=page --post_status=publish --post_title="Elementor Smoke Page" --post_content="Editable Elementor text demonstration" --allow-root > qa-results/elementor-post-created.txt
-          wp eval '$id=get_page_by_title("Elementor Smoke Page",OBJECT,"page")->ID;update_post_meta($id,"_elementor_edit_mode","builder");update_post_meta($id,"_elementor_data",wp_slash(wp_json_encode(array(array("id"=>"abc12345","elType"=>"section","settings"=>array(),"elements"=>array(array("id"=>"def12345","elType"=>"column","settings"=>array(),"elements"=>array(array("id"=>"ghi12345","elType"=>"widget","widgetType"=>"heading","settings"=>array("title"=>"Editable Elementor QA Heading")),"isInner"=>false)),"isInner"=>false)))));echo $id;' --path=wp --allow-root > qa-results/elementor-post-id.txt
+          wp eval '$p=get_page_by_path("elementor-smoke-page"); if(!$p)throw new Exception("Test page missing"); update_post_meta($p->ID,"_elementor_edit_mode","builder"); update_post_meta($p->ID,"_elementor_data",wp_slash("[{\\"id\\":\\"abc12345\\",\\"elType\\":\\"section\\",\\"settings\\":[],\\"elements\\":[{\\"id\\":\\"def12345\\",\\"elType\\":\\"column\\",\\"settings\\":[],\\"elements\\":[{\\"id\\":\\"ghi12345\\",\\"elType\\":\\"widget\\",\\"widgetType\\":\\"heading\\",\\"settings\\":{\\"title\\":\\"Editable Elementor QA Heading\\"}}]}]}]"));echo $p->ID;' --path=wp --allow-root > qa-results/elementor-post-id.txt
       - name: Real WordPress browser acceptance
         run: |
           npm install --no-save playwright@1.58.2
