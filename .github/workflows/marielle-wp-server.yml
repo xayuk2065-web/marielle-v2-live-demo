@@ -1,0 +1,102 @@
+name: Marielle WordPress Elementor server QA
+on:
+  push:
+    branches: [marielle-qa-technical]
+    paths: [".github/workflows/marielle-wp-server.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  server-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: qapassword
+          MYSQL_DATABASE: wordpress
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h127.0.0.1 -uroot -pqapassword"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mysqli, mbstring, curl, zip, gd, xml
+          tools: wp-cli
+      - name: Install disposable WordPress and Elementor
+        run: |
+          mkdir -p wordpress/wp-content/themes/marielle-v2-2-recovery/assets wordpress/wp-content/plugins/marielle-instagram-connector qa-results
+          cp qa-wp-theme/*.php qa-wp-theme/style.css wordpress/wp-content/themes/marielle-v2-2-recovery/
+          cp index.html wordpress/wp-content/themes/marielle-v2-2-recovery/assets/approved-demo.html
+          cp marielle-*.js marielle-*.css wordpress/wp-content/themes/marielle-v2-2-recovery/assets/
+          cp qa-wp-plugin/marielle-instagram-connector.php wordpress/wp-content/plugins/marielle-instagram-connector/
+          find wordpress/wp-content/themes/marielle-v2-2-recovery -name '*.php' -exec php -l {} \;
+          wp core download --path=wordpress --allow-root --force
+          wp config create --path=wordpress --dbname=wordpress --dbuser=root --dbpass=qapassword --dbhost=127.0.0.1:3306 --skip-check --allow-root
+          wp core install --path=wordpress --url=http://127.0.0.1:8085 --title=Marielle-QA --admin_user=test --admin_password=qa12345pass --admin_email=qa@example.invalid --skip-email --allow-root
+          wp theme activate marielle-v2-2-recovery --path=wordpress --allow-root
+          wp plugin activate marielle-instagram-connector --path=wordpress --allow-root
+          wp plugin install elementor --activate --path=wordpress --allow-root
+          wp option update marielle_instagram_profile https://www.instagram.com/marielle_qa/ --path=wordpress --allow-root
+          wp core version --path=wordpress --allow-root > qa-results/wordpress-version.txt
+          wp plugin list --path=wordpress --allow-root --format=json > qa-results/plugins.json
+          wp theme list --path=wordpress --allow-root --format=json > qa-results/themes.json
+      - name: Server-side Elementor and site integration assertions
+        run: |
+          cat > check-wp.php <<'PHP'
+          <?php
+          $checks = array();
+          function verify($name,$passed,$details='') {
+            global $checks;
+            $checks[] = array('name'=>$name,'status'=>$passed?'PASS':'FAIL','detail'=>$details);
+            echo ($passed?'PASS ':'FAIL ').$name."\n";
+          }
+          verify('Elementor active',class_exists('Elementor\\Plugin'));
+          verify('Recovery theme active',get_stylesheet()==='marielle-v2-2-recovery',get_stylesheet());
+          verify('Instagram connector active',function_exists('marielle_ig_validate_url'));
+          verify('Reject off-domain Instagram link',marielle_ig_validate_url('https://evil.example/anything')==='');
+          verify('Accept sanitized Instagram profile',marielle_ig_validate_url('https://instagram.com/marielle_qa')==='https://www.instagram.com/marielle_qa/');
+          $post_id=wp_insert_post(array('post_title'=>'Elementor QA Native Heading','post_type'=>'page','post_status'=>'publish','post_content'=>'Testing'));
+          $widget=array('id'=>'e0d1f123','elType'=>'widget','widgetType'=>'heading','settings'=>array('title'=>'Editable Elementor QA Heading'));
+          $column=array('id'=>'e0d1f124','elType'=>'column','settings'=>array(),'elements'=>array($widget),'isInner'=>false);
+          $section=array('id'=>'e0d1f125','elType'=>'section','settings'=>array(),'elements'=>array($column),'isInner'=>false);
+          update_post_meta($post_id,'_elementor_edit_mode','builder');
+          update_post_meta($post_id,'_elementor_data',wp_slash(wp_json_encode(array($section))));
+          $saved=get_post_meta($post_id,'_elementor_data',true);
+          verify('Elementor widget data saved',strpos($saved,'Editable Elementor QA Heading')!==false);
+          $html=Elementor\\Plugin::instance()->frontend->get_builder_content_for_display($post_id);
+          verify('Elementor heading renders',strpos($html,'Editable Elementor QA Heading')!==false,substr(strip_tags($html),0,80));
+          file_put_contents('qa-results/wordpress-elementor-server.json',wp_json_encode(array('scope'=>'Separate recovery candidate only, NOT original approved ZIP','checks'=>$checks),JSON_PRETTY_PRINT));
+          if(count(array_filter($checks,function($x){return $x['status']==='FAIL';})))exit(1);
+          PHP
+          php -l check-wp.php
+          wp eval-file check-wp.php --path=wordpress --allow-root
+          (cd wordpress && php -S 127.0.0.1:8085 > ../qa-results/php-server.log 2>&1) &
+          sleep 3
+          curl --fail --max-time 15 -sS http://127.0.0.1:8085/ > qa-results/wp-rendered-home.html
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          html=Path('qa-results/wp-rendered-home.html').read_text()
+          results=[
+             ('HTTP WordPress homepage contains locked heading','Make your mark.' in html),
+             ('Original 20 image references preserved',html.count('data:image/webp;base64,')==20),
+             ('WP adds Elementor assets',('elementor' in html.lower() and 'wp-content' in html)),
+             ('WP renders configured Instagram footer integration','data-marielle-instagram' in html and 'instagram.com/marielle_qa/' in html),
+             ('WP includes approved detail route JS','marielle-details.js' in html),
+          ]
+          for name,yes in results:print(('PASS' if yes else 'FAIL'),name)
+          Path('qa-results/http-frontend-checks.json').write_text(json.dumps([{'name':n,'status':'PASS' if yes else 'FAIL'} for n,yes in results],indent=2))
+          if not all(x[1] for x in results):raise SystemExit(1)
+          PY
+      - name: Upload verified QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marielle-wp-elementor-server-qa-evidence
+          path: qa-results/
+          retention-days: 30
